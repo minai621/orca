@@ -13,10 +13,14 @@ function createHarness() {
   const writes: string[] = []
   const emissions: PtyIngressEmission[] = []
   let group: number | null = SHELL_GROUP
+  const groupReads = { count: 0 }
   const ingress = new PtyStartupIngress({
     ownerBackend: 'posix-pty',
     resolveHostColors: () => ({ foreground: '#ffffff', background: '#000000' }),
-    readForegroundGroup: () => group,
+    readForegroundGroup: () => {
+      groupReads.count += 1
+      return group
+    },
     write: (data) => writes.push(data),
     onEmission: (emission) => emissions.push(emission)
   })
@@ -29,7 +33,7 @@ function createHarness() {
     ingress.accept(`${PROMPT}${COMMAND_START}`)
     group = commandGroup
   }
-  return { ingress, writes, emissions, visible, setGroup, runCommand }
+  return { ingress, writes, emissions, visible, setGroup, runCommand, groupReads }
 }
 
 describe('PTY owner colour replies after the asker exits', () => {
@@ -110,6 +114,38 @@ describe('PTY owner colour replies after the asker exits', () => {
     vi.runAllTimers()
 
     expect(writes).toEqual([REPLY])
+  })
+
+  it('forgets a live group once a later asker in the command is proven gone', () => {
+    vi.useFakeTimers()
+    const { ingress, writes, setGroup, runCommand } = createHarness()
+    runCommand()
+    ingress.accept(QUERY)
+    vi.advanceTimersByTime(20)
+    setGroup(COMMAND_GROUP + 1)
+    ingress.accept(QUERY)
+    setGroup(COMMAND_GROUP)
+    vi.advanceTimersByTime(20)
+    ingress.accept(QUERY)
+    ingress.accept(PROMPT)
+    vi.runAllTimers()
+
+    expect(writes).toEqual([REPLY])
+  })
+
+  it('settles every query held before the finish marker in one pass', () => {
+    vi.useFakeTimers()
+    const { ingress, writes, runCommand, groupReads } = createHarness()
+    runCommand()
+    for (let index = 0; index < 100; index += 1) {
+      ingress.accept(QUERY)
+    }
+    groupReads.count = 0
+    ingress.accept(PROMPT)
+    vi.runAllTimers()
+
+    expect(writes).toEqual([])
+    expect(groupReads.count).toBeLessThan(10)
   })
 
   it('sees a finish marker split across reads during the wait', () => {

@@ -64,9 +64,9 @@ export class PtyQueryAskerPresence {
     held.markers.scan(after)
   }
 
-  /** Feeds a later read to the held asker's finish watch. */
-  watch(read: string): void {
-    this.held?.markers.scan(read)
+  /** Feeds a later read to the held asker's finish watch; returns where its finish marker ends, or -1. */
+  watch(read: string): number {
+    return this.held?.markers.scan(read) ?? -1
   }
 
   /** `gone` once proven; otherwise `present` when `final`, else null to keep waiting. */
@@ -80,9 +80,7 @@ export class PtyQueryAskerPresence {
   }
 
   release(verdict: PtyQueryAskerVerdict): void {
-    if (verdict === 'present' && this.held) {
-      this.liveGroup = this.held.group
-    }
+    this.liveGroup = verdict === 'present' ? this.held?.group : undefined
     this.held = null
   }
 

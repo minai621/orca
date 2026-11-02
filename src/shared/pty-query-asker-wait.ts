@@ -17,6 +17,8 @@ export class PtyQueryAskerWait {
   private later: PtyIngressSourceSpan[] = []
   private verdict: { untilSeq: number; presence: PtyQueryAskerVerdict } | null = null
   private finishEnd: { input: string; end: number } | undefined
+  // Why: every query held before the command's finish marker shares its verdict, so replay never re-holds them.
+  private finishSeq = -1
 
   constructor(
     readForegroundGroup: (() => number | null | undefined) | undefined,
@@ -57,7 +59,10 @@ export class PtyQueryAskerWait {
   /** A later read while waiting: the verdict once that read settles it. */
   review(read: PtyIngressSourceSpan): PtyQueryAskerVerdict | null {
     this.later.push(read)
-    this.presence.watch(read.data)
+    const end = this.presence.watch(read.data)
+    if (end >= 0 && this.finishSeq < 0) {
+      this.finishSeq = read.rawStartSeq + end
+    }
     return this.presence.judge(false)
   }
 
@@ -73,11 +78,14 @@ export class PtyQueryAskerWait {
     const from = this.query.take()
     const later = this.later
     this.later = []
+    const finishSeq = this.finishSeq
+    this.finishSeq = -1
     this.presence.release(verdict)
     if (!from) {
       return null
     }
-    this.verdict = { untilSeq: from.rawEndSeq, presence: verdict }
+    const untilSeq = verdict === 'gone' ? Math.max(from.rawEndSeq, finishSeq) : from.rawEndSeq
+    this.verdict = { untilSeq, presence: verdict }
     return { from, later }
   }
 }
