@@ -14,7 +14,7 @@ import type { PtyIngressEmission } from '../../../shared/pty-startup-ingress-con
 import { resolvePtyOwnerBackend } from '../../../shared/pty-owner-backend'
 import { resolveProcessExitCause } from '../../../shared/terminal-exit-cause'
 import { POSIX_SHELL_STARTUP_COMMAND_ENV } from '../../pty/posix-shell-startup-command'
-import { createPtyForegroundReader } from '../../pty/pty-master-foreground-observation'
+import { ptyForegroundGroupReader } from '../../pty/pty-master-foreground-observation'
 import { getAgentForegroundContextPaths } from '../agent-foreground-context-paths'
 import { getSpawnedShellName } from './local-pty-launch-context'
 import type { LocalPtyLaunchPlan } from './local-pty-launch-plan'
@@ -119,7 +119,7 @@ export function activateLocalPtySession(args: {
   const startupIngress = new PtyStartupIngress({
     ...(spawn.startupIngress ? { intent: spawn.startupIngress } : {}),
     ownerBackend,
-    foreground: createPtyForegroundReader(proc),
+    readForegroundGroup: ptyForegroundGroupReader(proc),
     write: (data) => proc.write(data),
     onEmission: emitIngressData
   })

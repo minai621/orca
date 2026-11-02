@@ -12,38 +12,36 @@ const COMMAND_START = '\x1b]133;C\x07'
 function createHarness() {
   const writes: string[] = []
   const emissions: PtyIngressEmission[] = []
-  const foreground: { group: number | null; name: string } = { group: SHELL_GROUP, name: 'bash' }
+  let group: number | null = SHELL_GROUP
   const ingress = new PtyStartupIngress({
     ownerBackend: 'posix-pty',
     resolveHostColors: () => ({ foreground: '#ffffff', background: '#000000' }),
-    foreground: { group: () => foreground.group, processName: () => foreground.name },
+    readForegroundGroup: () => group,
     write: (data) => writes.push(data),
     onEmission: (emission) => emissions.push(emission)
   })
   const visible = (): string => emissions.map((emission) => emission.data).join('')
+  const setGroup = (next: number | null): void => {
+    group = next
+  }
   // The shell prints its prompt, then runs a command in its own process group.
-  const runCommand = (name: string): void => {
+  const runCommand = (commandGroup = COMMAND_GROUP): void => {
     ingress.accept(`${PROMPT}${COMMAND_START}`)
-    foreground.group = COMMAND_GROUP
-    foreground.name = name
+    group = commandGroup
   }
-  const returnToShell = (): void => {
-    foreground.group = SHELL_GROUP
-    foreground.name = 'bash'
-  }
-  return { ingress, writes, visible, foreground, runCommand, returnToShell }
+  return { ingress, writes, visible, setGroup, runCommand }
 }
 
 describe('PTY owner colour replies after the asker exits', () => {
   afterEach(() => vi.useRealTimers())
 
   it('drops the reply when the shell finishes the command right after it asked', () => {
-    // `/usr/bin/printf '\e]11;?\a'` exits before bash reclaims the tty; the reply would be typed into bash (#16633).
+    // `/usr/bin/printf '\e]11;?\a'` exits before bash prints its prompt; the reply would be typed into bash (#16633).
     vi.useFakeTimers()
-    const { ingress, writes, visible, runCommand, returnToShell } = createHarness()
-    runCommand('printf')
+    const { ingress, writes, visible, setGroup, runCommand } = createHarness()
+    runCommand()
     ingress.accept(QUERY)
-    returnToShell()
+    setGroup(SHELL_GROUP)
     ingress.accept(PROMPT)
     vi.runAllTimers()
 
@@ -51,22 +49,23 @@ describe('PTY owner colour replies after the asker exits', () => {
     expect(visible()).toBe(`${PROMPT}${COMMAND_START}${PROMPT}`)
   })
 
-  it('drops the reply once the shell owns the terminal again mid-command', () => {
-    const { ingress, writes, runCommand, returnToShell } = createHarness()
-    runCommand('printf')
-    returnToShell()
-    ingress.accept(QUERY)
+  it('drops the reply when the command finished in the same read, even without a foreground group', () => {
+    // ConPTY has no foreground group; the finish marker alone proves the asker gone.
+    const { ingress, writes, setGroup, runCommand } = createHarness()
+    runCommand()
+    setGroup(null)
+    ingress.accept(`${QUERY}${PROMPT}`)
 
     expect(writes).toEqual([])
   })
 
   it('drops the reply when the next command of the line has taken the terminal', () => {
-    // `printf …; cat`: bash reaps printf and hands the terminal to cat before it prints any prompt.
+    // `printf …; cat`: bash hands the terminal to cat before it prints any prompt.
     vi.useFakeTimers()
-    const { ingress, writes, foreground, runCommand } = createHarness()
-    runCommand('printf')
+    const { ingress, writes, setGroup, runCommand } = createHarness()
+    runCommand()
     ingress.accept(QUERY)
-    foreground.group = 201
+    setGroup(COMMAND_GROUP + 1)
     vi.advanceTimersByTime(20)
 
     expect(writes).toEqual([])
@@ -75,36 +74,52 @@ describe('PTY owner colour replies after the asker exits', () => {
   it('answers a live command after a short wait, keeping a DA1 sentinel behind the reply', () => {
     vi.useFakeTimers()
     const { ingress, writes, visible, runCommand } = createHarness()
-    runCommand('delta')
+    runCommand()
     ingress.accept(`${QUERY}${DA1}`)
     expect(writes).toEqual([])
     expect(visible()).toBe(`${PROMPT}${COMMAND_START}`)
 
     vi.advanceTimersByTime(20)
     expect(writes).toEqual([REPLY])
-    // The viewer answers DA1 only after the colour reply is written.
     expect(visible()).toBe(`${PROMPT}${COMMAND_START}${DA1}`)
+
+    // A command already proven live is answered at once.
+    ingress.accept(QUERY)
+    expect(writes).toEqual([REPLY, REPLY])
   })
 
-  it('answers at once at the prompt, before any marker, and for an agent with its own prompt markers', () => {
-    const { ingress, writes, foreground } = createHarness()
+  it('answers a builtin or command substitution in the shell group once no prompt follows', () => {
+    vi.useFakeTimers()
+    const { ingress, writes, runCommand } = createHarness()
+    runCommand(SHELL_GROUP)
+    ingress.accept(QUERY)
+    vi.advanceTimersByTime(20)
+
+    expect(writes).toEqual([REPLY])
+  })
+
+  it('flushes held output at a snapshot barrier', () => {
+    vi.useFakeTimers()
+    const { ingress, writes, visible, runCommand } = createHarness()
+    runCommand()
+    ingress.accept(`${QUERY}after`)
+    ingress.snapshotBarrier()
+
+    expect(writes).toEqual([REPLY])
+    expect(visible()).toBe(`${PROMPT}${COMMAND_START}after`)
+  })
+
+  it('answers at once at the prompt, at an Oh My Posh prompt, and with no foreground group', () => {
+    const { ingress, writes, setGroup, runCommand } = createHarness()
     ingress.accept(QUERY)
     ingress.accept(PROMPT)
     ingress.accept(QUERY)
-    ingress.accept(COMMAND_START)
-    foreground.group = 300
-    foreground.name = 'node'
-    ingress.accept(`\x1b]133;A\x07> ${QUERY}`)
-
-    expect(writes).toEqual([REPLY, REPLY, REPLY])
-  })
-
-  it('answers at once when the foreground group is unknown', () => {
-    const { ingress, writes, foreground, runCommand } = createHarness()
-    runCommand('printf')
-    foreground.group = null
+    // OMP closes its own prompt zone with adjacent B C D;0 (#10923); no command is running.
+    ingress.accept(`\x1b]133;B\x07\x1b]133;C\x07\x1b]133;D;0\x07${QUERY}`)
+    runCommand()
+    setGroup(null)
     ingress.accept(QUERY)
 
-    expect(writes).toEqual([REPLY])
+    expect(writes).toEqual([REPLY, REPLY, REPLY, REPLY])
   })
 })

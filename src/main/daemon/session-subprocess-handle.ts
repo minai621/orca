@@ -1,7 +1,6 @@
 import type { TerminalForegroundSample } from '../../shared/terminal-foreground-observation'
 import type { PtyChildProcessVerdict } from '../../shared/terminal-process-inspection'
 import type { TerminalExitCause } from '../../shared/terminal-exit-cause'
-import type { PtyForegroundReader } from '../../shared/pty-shell-reclaim'
 
 import type { JobTerminationOutcome } from '../windows/windows-pty-job'
 
@@ -26,8 +25,8 @@ export type SubprocessHandle = {
   shellPath?: string
   shellCwd?: string
   shellPathEnv?: string
-  /** Synchronous foreground-group reads; absent for ConPTY. */
-  foreground?: PtyForegroundReader
+  /** The PTY's foreground process group (tcgetpgrp); absent for ConPTY. */
+  readForegroundGroup?: () => number | null | undefined
   /** POSIX slave path for reading line discipline; absent for ConPTY. */
   slavePath?: string
   write(data: string): void

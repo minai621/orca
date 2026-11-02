@@ -8,7 +8,6 @@ import { resolveOuterWrapperForegroundProcess } from '../../shared/foreground-wr
 import { unreadableArgvName, type ProcessTableRow } from '../../shared/process-table-snapshot'
 import { isShellProcess } from '../../shared/shell-process-detection'
 import type { TerminalForegroundSample } from '../../shared/terminal-foreground-observation'
-import type { PtyForegroundReader } from '../../shared/pty-shell-reclaim'
 import { isRetiredPtyMaster } from './node-pty-master-fd-retirement'
 import { readPtsName } from './node-pty-pts-name'
 import {
@@ -44,22 +43,10 @@ export function readPtyForegroundGroup(proc: unknown): number | null | undefined
 }
 
 /** ConPTY has no foreground process group, so Windows PTYs get no reader. */
-export function createPtyForegroundReader(proc: {
-  readonly process: string
-}): PtyForegroundReader | undefined {
-  if (process.platform === 'win32') {
-    return undefined
-  }
-  return {
-    group: () => readPtyForegroundGroup(proc),
-    processName: () => {
-      try {
-        return proc.process
-      } catch {
-        return null
-      }
-    }
-  }
+export function ptyForegroundGroupReader(
+  proc: unknown
+): (() => number | null | undefined) | undefined {
+  return process.platform === 'win32' ? undefined : () => readPtyForegroundGroup(proc)
 }
 
 export function resolvePtyForegroundMembers(

@@ -1,5 +1,4 @@
 import type { PtyOwnerBackend } from './pty-owner-backend'
-import type { PtyForegroundReader } from './pty-shell-reclaim'
 import type { PtyStartupIngressIntent } from './pty-startup-ingress-intent'
 import type { TerminalOscColorQueryReplyColors } from './terminal-osc-color-reply'
 
@@ -16,8 +15,9 @@ export type PtyStartupIngressOptions = {
   /** Host-wide viewer colours, read per query so a theme change reaches a long-lived pane.
    *  Defaults to this process's pushed colours. */
   resolveHostColors?: () => TerminalOscColorQueryReplyColors | null
-  /** Lets the owner drop a colour query whose asker already exited; absent, every query is answered. */
-  foreground?: PtyForegroundReader
+  /** The PTY's foreground process group (tcgetpgrp). Lets the owner drop a colour query whose asker already exited;
+   *  absent (ConPTY), every query is answered at once. */
+  readForegroundGroup?: () => number | null | undefined
   write: (data: string) => void
   onEmission: (emission: PtyIngressEmission) => void
 }

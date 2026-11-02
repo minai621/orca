@@ -60,8 +60,8 @@ export function createOsc133CommandFinishedScanner(
   onCommandFinished: (bestEffortExitCode: number | null) => void,
   /** OSC 133;C marks command start; endInChunk points just past the sequence, where command output begins. */
   onCommandStarted?: (endInChunk: number) => void,
-  /** OSC 133;A marks a prompt start, printed by the shell or by an app with its own prompt zones. */
-  onPromptStarted?: () => void
+  /** An app's own prompt zone closed (see closesAppOsc133Zone); its C started no command. */
+  onAppZoneClosed?: () => void
 ): Osc133CommandFinishedScanner {
   let carry = ''
   // OSC 133 markers seen back to back since the last other output, e.g. 'BC'.
@@ -77,10 +77,7 @@ export function createOsc133CommandFinishedScanner(
     const closesAppZone = closesAppOsc133Zone(adjacentMarkers, payload)
     adjacentMarkers = (adjacentMarkers + sequence.slice(0, 1)).slice(-2)
     if (closesAppZone) {
-      return
-    }
-    if (sequence === 'A') {
-      onPromptStarted?.()
+      onAppZoneClosed?.()
       return
     }
     if (sequence === 'C') {
