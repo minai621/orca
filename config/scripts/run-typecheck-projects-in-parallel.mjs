@@ -1,5 +1,6 @@
 import { spawnProcess } from '@orca/process-host'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync } from 'node:fs'
+import lockfile from 'proper-lockfile'
 import { createRequire } from 'node:module'
 import { availableParallelism, totalmem } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -7,19 +8,24 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const BYTES_PER_GIB = 1024 ** 3
 
-// Peak heap per project, read from `tsc --extendedDiagnostics` and rounded up. node and
-// web are the expensive pair: run together they exceed a 16 GB CI runner, and an
-// out-of-memory runner is killed mid-check, so the job reports a lost runner instead of a
-// type error. Admission is therefore by memory, not by core count alone.
+// 네이티브 검사는 메모리 사용이 겹치지 않도록 하나씩 실행해요.
 export const TYPECHECK_PROJECTS = [
-  { config: 'config/tsconfig.node.json', heapGib: 7 },
-  { config: 'config/tsconfig.tc.web.json', heapGib: 6 },
-  { config: 'config/tsconfig.tc.cli.json', heapGib: 2 },
-  // Root projects exclude workspace package tests; each runs with its package's compiler.
-  { config: 'src/packages/process-host/tsconfig.test.json', heapGib: 1 }
+  { name: 'node', config: 'config/tsconfig.node.json', heapGib: 7 },
+  { name: 'web', config: 'config/tsconfig.tc.web.json', heapGib: 6 },
+  { name: 'cli', config: 'config/tsconfig.tc.cli.json', heapGib: 2 },
+  { name: 'node-tests', config: 'config/tsconfig.tests.node.json', heapGib: 7 },
+  { name: 'web-tests', config: 'config/tsconfig.tests.web.json', heapGib: 6 },
+  { name: 'cli-tests', config: 'config/tsconfig.tests.cli.json', heapGib: 2 },
+  // 패키지 테스트는 패키지에 설치된 컴파일러로 검사해요.
+  { name: 'process-host', config: 'src/packages/process-host/tsconfig.test.json', heapGib: 1 }
 ]
 
-// The OS, node itself, and the runner agent need their share; the rest is what tsc may hold.
+const OPTIONAL_TYPECHECK_PROJECTS = [
+  { name: 'e2e', config: 'config/tsconfig.e2e.json', heapGib: 7 },
+  { name: 'web-base', config: 'config/tsconfig.web.json', heapGib: 6 }
+]
+
+// Bun 동시 실행에서도 운영체제와 실행기의 메모리를 남겨요.
 export function admissibleHeapGib(totalBytes) {
   return Math.max(1, (totalBytes / BYTES_PER_GIB) * 0.75)
 }
@@ -70,11 +76,24 @@ export function resolveProjectCompiler(config, root = repoRoot) {
   return resolveProjectCompilerInfo(config, root).program
 }
 
+/**
+ * 검사할 프로젝트와 컴파일러 옵션을 읽어요.
+ * @param args - 명령줄에서 받은 옵션 목록이에요.
+ */
 export function parseTypecheckOptions(args) {
   const options = { compiler: 'native', bunConcurrency: 1, bunThreads: 4 }
   for (const argument of args) {
     if (argument === '--compiler=bun' || argument === '--compiler=native') {
       options.compiler = argument.slice('--compiler='.length)
+    } else if (argument.startsWith('--project=')) {
+      const selection = argument.slice('--project='.length)
+      const projects = [...TYPECHECK_PROJECTS, ...OPTIONAL_TYPECHECK_PROJECTS].filter(
+        ({ name }) => name === selection || (selection === 'tests' && name.endsWith('-tests'))
+      )
+      if (projects.length === 0 || options.projects) {
+        throw new Error(`Unknown or repeated typecheck project: ${argument}`)
+      }
+      options.projects = projects
     } else if (argument.startsWith('--bun-concurrency=')) {
       options.bunConcurrency = Number(argument.slice('--bun-concurrency='.length))
     } else if (argument.startsWith('--bun-threads=')) {
@@ -91,7 +110,15 @@ export function parseTypecheckOptions(args) {
   return options
 }
 
+/**
+ * 네이티브 검사는 순차 실행하고 Bun은 지정한 동시 실행 범위를 적용해요.
+ * @param projects - config 경로와 예상 heapGib를 가진 프로젝트 목록이에요.
+ * @param options - compiler, bunConcurrency, memoryBytes, parallelism으로 실행 범위를 정해요.
+ */
 export function typecheckBatches(projects, { compiler, bunConcurrency, memoryBytes, parallelism }) {
+  if (compiler !== 'bun') {
+    return projects.map((project) => [project])
+  }
   return planTypecheckBatches(
     compiler === 'bun' ? projects.map((project) => ({ ...project, heapGib: 4 })) : projects,
     {
@@ -132,6 +159,10 @@ function checkProject(config, { compiler, bunThreads, root, spawnCompiler }) {
   })
 }
 
+/**
+ * 체크아웃 잠금을 유지하며 프로젝트를 검사하고 실패를 모아요.
+ * @param options - compiler는 native가 기본이고 bunConcurrency는 1, bunThreads는 4예요. root는 저장소 루트, projects는 검사 목록, spawnCompiler는 프로세스 실행기예요. memoryBytes와 parallelism은 Bun 실행 범위를 제한해요.
+ */
 export async function runTypecheckProjects({
   compiler = 'native',
   bunConcurrency = 1,
@@ -142,41 +173,92 @@ export async function runTypecheckProjects({
   memoryBytes = totalmem(),
   parallelism = availableParallelism()
 } = {}) {
-  const batches = typecheckBatches(projects, { compiler, bunConcurrency, memoryBytes, parallelism })
-  if (compiler === 'bun') {
-    // Equal Bun reservations let a freed slot start the next project without waiting for peers.
-    const pending = batches.flat()
-    const failures = []
-    let next = 0
-    await Promise.all(
-      Array.from({ length: Math.max(0, ...batches.map((batch) => batch.length)) }, async () => {
-        while (next < pending.length) {
-          const index = next++
-          try {
-            await checkProject(pending[index].config, { compiler, bunThreads, root, spawnCompiler })
-          } catch (reason) {
-            failures.push({ index, reason })
-          }
-        }
-      })
-    )
-    return failures.sort((left, right) => left.index - right.index).map(({ reason }) => reason)
-  }
-  // Every batch runs even after one fails, so a single broken project still reports the rest.
-  const failures = []
-  for (const batch of batches) {
-    const results = await Promise.allSettled(
-      batch.map((project) =>
-        checkProject(project.config, { compiler, bunThreads, root, spawnCompiler })
-      )
-    )
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        failures.push(result.reason)
+  root = realpathSync(root)
+  const lockfilePath = join(root, 'node_modules', '.cache', 'typechecks', 'compiler.lock')
+  mkdirSync(dirname(lockfilePath), { recursive: true })
+  const children = new Set()
+  let compromised
+  const release = await lockfile.lock(root, {
+    lockfilePath,
+    stale: 30_000,
+    retries: { forever: true, minTimeout: 100, maxTimeout: 1000 },
+    onCompromised(error) {
+      compromised = error
+      for (const child of children) {
+        child.kill()
       }
     }
+  })
+  /**
+   * 잠금이 유지되는 동안에만 검사 프로세스를 시작해요.
+   * @param spec - 실행할 프로그램, 인자, 작업 디렉터리와 표준 입출력 설정이에요.
+   */
+  const launchCompiler = (spec) => {
+    if (compromised) {
+      throw compromised
+    }
+    const child = spawnCompiler(spec)
+    children.add(child)
+    child.once('close', () => children.delete(child))
+    child.once('error', () => children.delete(child))
+    return child
   }
-  return failures
+  try {
+    const batches = typecheckBatches(projects, {
+      compiler,
+      bunConcurrency,
+      memoryBytes,
+      parallelism
+    })
+    if (compiler === 'bun') {
+      // Bun은 같은 메모리를 예약해 빈 실행 슬롯부터 다음 검사를 시작해요.
+      const pending = batches.flat()
+      const failures = []
+      let next = 0
+      await Promise.all(
+        Array.from({ length: Math.max(0, ...batches.map((batch) => batch.length)) }, async () => {
+          while (next < pending.length) {
+            const index = next++
+            try {
+              await checkProject(pending[index].config, {
+                compiler,
+                bunThreads,
+                root,
+                spawnCompiler: launchCompiler
+              })
+            } catch (reason) {
+              failures.push({ index, reason })
+            }
+          }
+        })
+      )
+      return failures.sort((left, right) => left.index - right.index).map(({ reason }) => reason)
+    }
+    // 한 프로젝트가 실패해도 나머지 프로젝트의 오류를 함께 확인해요.
+    const failures = []
+    for (const batch of batches) {
+      const results = await Promise.allSettled(
+        batch.map((project) =>
+          checkProject(project.config, {
+            compiler,
+            bunThreads,
+            root,
+            spawnCompiler: launchCompiler
+          })
+        )
+      )
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          failures.push(result.reason)
+        }
+      }
+    }
+    return failures
+  } finally {
+    if (!compromised) {
+      await release()
+    }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

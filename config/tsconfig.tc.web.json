@@ -3,7 +3,6 @@
   "include": [
     "../src/renderer/src/env.d.ts",
     "../src/renderer/src/**/*",
-    "../src/renderer/src/**/*.tsx",
     "../src/preload/api-types.ts",
     "../src/preload/api/**/*",
     "../src/preload/browser-client-page-renderer-requests.ts",
@@ -53,6 +52,7 @@
     "../src/main/window/macos-app-activation.ts"
   ],
   "compilerOptions": {
+    "composite": false,
     "paths": {
       "@renderer/*": ["../src/renderer/src/*"],
       "@/*": ["../src/renderer/src/*"]

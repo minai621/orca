@@ -1,4 +1,8 @@
 import type { PathExistenceResult } from '../../shared/path-existence-batch'
+import type {
+  TypeScriptQuery,
+  TypeScriptQueryResult
+} from '../../shared/typescript-language-service'
 import type { RuntimeFileReadChunkResult } from '../../shared/runtime-types'
 import type { SearchOptions, SearchResult } from '../../shared/code-search-types'
 import type {
@@ -47,6 +51,7 @@ export type ExportApi = {
 
 export type FilesystemApi = {
   fs: {
+    queryTypeScript?: (args: TypeScriptQuery) => Promise<TypeScriptQueryResult>
     getPathForFile?: (file: File) => string
     prepareDroppedPaths: (args: PrepareDroppedPathsRequest) => Promise<PreparedDroppedPaths>
     readFileChunk: (args: {

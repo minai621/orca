@@ -1,6 +1,7 @@
 import type { Store } from '../persistence'
 import type { CommitMessageAgentEnvironmentResolvers } from '../text-generation/commit-message-agent-environment'
 import { registerLocalLogTailHandlers } from './local-log-tail'
+import { registerTypeScriptLanguageHandlers } from './typescript-language-service'
 import { createSenderScopedRequestCancellations } from './sender-scoped-request-cancellation'
 import {
   createFilesystemHandlerContext,
@@ -32,6 +33,7 @@ export function registerFilesystemHandlers(
   )
 
   registerFilesystemReadHandlers(context)
+  registerTypeScriptLanguageHandlers(store)
   registerFilesystemDownloadHandlers(context)
   registerFilesystemWriteHandlers(context)
   registerFilesystemSearchHandlers(context)

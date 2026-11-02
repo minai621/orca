@@ -1,0 +1,29 @@
+{
+  "extends": "./tsconfig.tc.web.json",
+  "include": [
+    "../src/renderer/src/**/*.test.*",
+    "../src/renderer/src/**/*.spec.*",
+    "../src/renderer/src/**/__tests__/**/*",
+    "../src/renderer/src/**/__fixtures__/**/*",
+    "../src/preload/api/**/*.test.*",
+    "../src/preload/api/**/*.spec.*",
+    "../src/preload/api/**/__tests__/**/*",
+    "../src/preload/api/**/__fixtures__/**/*",
+    "../src/shared/**/*.test.*",
+    "../src/shared/**/*.spec.*",
+    "../src/shared/**/__tests__/**/*",
+    "../src/shared/**/__fixtures__/**/*",
+    "../src/packages/process-host/src/__fixtures__/**/*",
+    "../src/renderer/src/**/*.d.ts",
+    "../src/renderer/src/**/*.d.mts",
+    "../src/renderer/src/**/*.d.cts",
+    "../src/preload/api/**/*.d.ts",
+    "../src/preload/api/**/*.d.mts",
+    "../src/preload/api/**/*.d.cts",
+    "../src/shared/**/*.d.ts",
+    "../src/shared/**/*.d.mts",
+    "../src/shared/**/*.d.cts",
+    "../src/types/**/*"
+  ],
+  "exclude": ["../**/node_modules", "../**/bower_components", "../**/jspm_packages", "../out"]
+}

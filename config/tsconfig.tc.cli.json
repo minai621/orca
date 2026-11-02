@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.cli.json",
   "compilerOptions": {
+    "composite": false,
     "module": "Node20",
     "moduleResolution": "node16"
   }

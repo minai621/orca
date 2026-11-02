@@ -134,14 +134,55 @@ describe('workspace package test typecheck', () => {
 describe('CI compiler selection', () => {
   it('keeps native incremental checking as the local default', () => {
     expect(parseTypecheckOptions([]).compiler).toBe('native')
+    expect(
+      typecheckBatches(TYPECHECK_PROJECTS, {
+        compiler: 'native',
+        memoryBytes: DEV_LAPTOP.totalBytes,
+        parallelism: 18
+      })
+    ).toEqual(TYPECHECK_PROJECTS.map((project) => [project]))
   })
 
-  it.each(['--compiler=typo', '--bun-concurrency=0', '--bun-threads=NaN', '--bun-concurrency=5'])(
-    'rejects unsafe or unknown options: %s',
-    (argument) => {
-      expect(() => parseTypecheckOptions([argument])).toThrow()
+  it.each([
+    '--compiler=typo',
+    '--project=unknown',
+    '--bun-concurrency=0',
+    '--bun-threads=NaN',
+    '--bun-concurrency=5'
+  ])('rejects unsafe or unknown options: %s', (argument) => {
+    expect(() => parseTypecheckOptions([argument])).toThrow()
+  })
+
+  it.each(['node', 'web', 'cli', 'process-host', 'node-tests', 'web-tests', 'cli-tests'])(
+    'selects only the requested %s project',
+    (name) => {
+      expect(parseTypecheckOptions([`--project=${name}`]).projects).toEqual(
+        TYPECHECK_PROJECTS.filter((project) => project.name === name)
+      )
+      expect(() => parseTypecheckOptions([`--project=${name}`, '--project=web'])).toThrow(
+        'repeated'
+      )
     }
   )
+
+  it('keeps application test coverage in the default run and selects all test projects together', () => {
+    expect(parseTypecheckOptions(['--project=tests']).projects.map(({ config }) => config)).toEqual(
+      [
+        'config/tsconfig.tests.node.json',
+        'config/tsconfig.tests.web.json',
+        'config/tsconfig.tests.cli.json'
+      ]
+    )
+    expect(TYPECHECK_PROJECTS.filter(({ name }) => name.endsWith('-tests'))).toHaveLength(3)
+  })
+
+  it.each([
+    ['e2e', 'config/tsconfig.e2e.json'],
+    ['web-base', 'config/tsconfig.web.json']
+  ])('selects optional %s without including it in default checks', (name, config) => {
+    expect(parseTypecheckOptions([`--project=${name}`]).projects).toMatchObject([{ config }])
+    expect(TYPECHECK_PROJECTS.some((project) => project.name === name)).toBe(false)
+  })
 
   it('bounds Bun project concurrency and reserves memory for overlapping checks', () => {
     const options = parseTypecheckOptions([
@@ -154,7 +195,7 @@ describe('CI compiler selection', () => {
       memoryBytes: CI_RUNNER.totalBytes,
       parallelism: 4
     })
-    expect(batches.map((batch) => batch.length)).toEqual([2, 2])
+    expect(batches.map((batch) => batch.length)).toEqual([2, 2, 2, 1])
     expect(batches.flat().map((project) => project.config)).toEqual(
       TYPECHECK_PROJECTS.map((project) => project.config)
     )

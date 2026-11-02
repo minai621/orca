@@ -35,13 +35,13 @@ function start(memoryBytes = 16 * 1024 ** 3) {
 
 it('fills a freed compiler slot while the other project is still running', async () => {
   const result = start()
-  expect(children).toHaveLength(2)
-  children[1].child.emit('close', 0, null)
-  await vi.waitFor(() => expect(children).toHaveLength(3))
-  children[2].child.emit('close', 0, null)
-  await vi.waitFor(() => expect(children).toHaveLength(4))
-  expect(active).toBe(2)
-  children[3].child.emit('close', 0, null)
+  await vi.waitFor(() => expect(children).toHaveLength(2))
+  for (let index = 1; index < TYPECHECK_PROJECTS.length - 1; index++) {
+    children[index].child.emit('close', 0, null)
+    await vi.waitFor(() => expect(children).toHaveLength(index + 2))
+    expect(active).toBe(2)
+  }
+  children.at(-1).child.emit('close', 0, null)
   children[0].child.emit('close', 0, null)
   expect(await result).toEqual([])
   expect(peak).toBe(2)
@@ -55,12 +55,17 @@ it('fills a freed compiler slot while the other project is still running', async
 
 it('keeps checking after compiler failures and reports errors in project order', async () => {
   const result = start()
+  await vi.waitFor(() => expect(children).toHaveLength(2))
   children[1].child.emit('close', 1, null)
   await vi.waitFor(() => expect(children).toHaveLength(3))
   children[0].child.emit('close', null, 'SIGKILL')
   await vi.waitFor(() => expect(children).toHaveLength(4))
-  children[2].child.emit('close', 0, null)
-  children[3].child.emit('close', 0, null)
+  for (let index = 2; index < TYPECHECK_PROJECTS.length; index++) {
+    await vi.waitFor(() =>
+      expect(children).toHaveLength(Math.min(index + 2, TYPECHECK_PROJECTS.length))
+    )
+    children[index].child.emit('close', 0, null)
+  }
   expect((await result).map(({ message }) => message)).toEqual([
     'bun config/tsconfig.node.json exited with signal SIGKILL',
     'bun config/tsconfig.tc.web.json exited with code 1'
@@ -70,7 +75,7 @@ it('keeps checking after compiler failures and reports errors in project order',
 
 it('reduces the queue to one slot when two reservations exceed the memory budget', async () => {
   const result = start(4 * 1024 ** 3)
-  expect(children).toHaveLength(1)
+  await vi.waitFor(() => expect(children).toHaveLength(1))
   for (let index = 0; index < TYPECHECK_PROJECTS.length; index++) {
     await vi.waitFor(() => expect(children).toHaveLength(index + 1))
     children[index].child.emit('close', 0, null)

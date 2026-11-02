@@ -1,3 +1,6 @@
+import { registerTypeScriptModelOwner } from '@/lib/typescript-model-owner'
+import { resolveWorktreeOperationRoute } from '@/lib/worktree-operation-route'
+import { selectMarkdownDocumentWorktreePath } from './markdown-document-worktree-path-selector'
 import { useCallback, useLayoutEffect, useRef } from 'react'
 import type { OnMount } from '@monaco-editor/react'
 import { useAppStore } from '@/store'
@@ -74,6 +77,29 @@ export function useMonacoEditorMount(params: MonacoEditorMountParams): OnMount {
       editorRef.current = editorInstance
       setMountedEditor(editorInstance)
       const uninstallE2EProbe = installMonacoE2EProbe(editorInstance, filePath)
+      const state = useAppStore.getState()
+      const file = state.openFiles.find((item) => item.id === fileId)
+      const route = worktreeId ? resolveWorktreeOperationRoute(state, worktreeId) : null
+      const rootPath = selectMarkdownDocumentWorktreePath(state, worktreeId ?? null)
+      const model = editorInstance.getModel()
+      const unregisterTypeScriptOwner =
+        model &&
+        rootPath &&
+        worktreeId &&
+        (languageRef.current === 'typescript' || languageRef.current === 'javascript') &&
+        file?.mode === 'edit' &&
+        !file.isUntitled &&
+        !modelOwnerKey &&
+        !file.runtimeEnvironmentId &&
+        !file.externalSshTargetId &&
+        route?.executionHostId === 'local' &&
+        !route.runtimeEnvironmentId
+          ? registerTypeScriptModelOwner(model, {
+              rootPath,
+              filePath,
+              worktreeId
+            })
+          : undefined
       let autoHeightSub: { dispose: () => void } | null = null
       let autoHeightFrame: number | null = null
       const updateAutoHeight = (): void => {
@@ -188,6 +214,7 @@ export function useMonacoEditorMount(params: MonacoEditorMountParams): OnMount {
         conflictDecorationsRef.current?.clear()
         conflictDecorationsRef.current = null
         uninstallE2EProbe()
+        unregisterTypeScriptOwner?.()
         editorRef.current = null
         setMountedEditor(null)
         setCommentPopover(null)

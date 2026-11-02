@@ -292,6 +292,16 @@
     "../src/main/sqlite/node-sqlite-statement.ts",
     "../src/main/win32-utils.ts"
   ],
+  "exclude": [
+    "../**/node_modules",
+    "../**/bower_components",
+    "../**/jspm_packages",
+    "../out",
+    "../**/*.test.*",
+    "../**/*.spec.*",
+    "../**/__tests__/**",
+    "../**/__fixtures__/**"
+  ],
   "compilerOptions": {
     "composite": true,
     // The CLI runs on Node 24; Node20 models synchronous ESM imports from CommonJS.

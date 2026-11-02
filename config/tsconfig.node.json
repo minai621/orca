@@ -24,6 +24,16 @@
     "../src/wsl-guest/**/*",
     "../src/types/**/*"
   ],
+  "exclude": [
+    "../**/node_modules",
+    "../**/bower_components",
+    "../**/jspm_packages",
+    "../out",
+    "../**/*.test.*",
+    "../**/*.spec.*",
+    "../**/__tests__/**",
+    "../**/__fixtures__/**"
+  ],
   "compilerOptions": {
     "composite": true,
     "types": ["electron-vite/node"]

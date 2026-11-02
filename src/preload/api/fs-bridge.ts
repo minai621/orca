@@ -25,8 +25,14 @@ import type {
   LocalLogTailWatchArgs
 } from '../../shared/local-log-tail-types'
 import type { PreloadApi } from '../api-types'
+import type {
+  TypeScriptQuery,
+  TypeScriptQueryResult
+} from '../../shared/typescript-language-service'
 
 export const fsApi = {
+  queryTypeScript: (args: TypeScriptQuery): Promise<TypeScriptQueryResult> =>
+    ipcRenderer.invoke('fs:queryTypeScript', args),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   prepareDroppedPaths: (args: PrepareDroppedPathsRequest): Promise<PreparedDroppedPaths> =>
     ipcRenderer.invoke('fs:prepareDroppedPaths', args),

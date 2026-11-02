@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.tc.cli.json",
+  "include": [
+    "../src/cli/**/*.test.*",
+    "../src/cli/**/*.spec.*",
+    "../src/cli/**/__tests__/**/*",
+    "../src/cli/**/__fixtures__/**/*",
+    "../src/shared/**/*.test.*",
+    "../src/shared/**/*.spec.*",
+    "../src/shared/**/__tests__/**/*",
+    "../src/shared/**/__fixtures__/**/*",
+    "../src/packages/process-host/src/__fixtures__/**/*",
+    "../src/cli/**/*.d.ts",
+    "../src/cli/**/*.d.mts",
+    "../src/cli/**/*.d.cts",
+    "../src/shared/**/*.d.ts",
+    "../src/shared/**/*.d.mts",
+    "../src/shared/**/*.d.cts",
+    "../src/types/**/*"
+  ],
+  "exclude": ["../**/node_modules", "../**/bower_components", "../**/jspm_packages", "../out"]
+}

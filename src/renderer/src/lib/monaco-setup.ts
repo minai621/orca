@@ -1,3 +1,7 @@
+import { installTypeScriptLanguageFeatures } from './typescript-language-features'
+import { useAppStore } from '@/store'
+import { detectLanguage } from './language-detect'
+import { relativePathInsideRoot } from '../../../shared/cross-platform-path'
 import { loader } from '@monaco-editor/react'
 import { editorModelRegistry } from './editor-model-registry'
 import * as monaco from 'monaco-editor'
@@ -44,18 +48,8 @@ globalThis.MonacoEnvironment = {
   }
 }
 
-// Why: Monaco here is a viewer/diff surface, not a type checker — users edit
-// real code in their own IDE. The sandboxed TS worker cannot resolve imports
-// to project files, so semantic validation produces a long tail of false
-// positives (unresolved modules 2307/2792, unused-import fades 6133/6138/
-// 6192/6196/6198/6205, missing names 2304/2305, bogus type mismatches 2322/
-// 2339/2345/2571/2724, implicit-any 7006/7016/7026/7031/7053/18046/18048).
-// Syntax validation is also noisy in the diff viewer: with `renderSideBySide`
-// off (or during partial hunks), Monaco feeds the worker concatenated
-// original+modified text that isn't a valid TS program, producing fake
-// parse errors like "',' expected (1005)". Disable all three categories —
-// we keep tokenization (colorization) which is what actually gives useful
-// reading affordance here.
+// 프로젝트 분석은 네이티브 서버에 맡겨요. 임베디드 모델과 diff의 sandbox는 프로젝트 의존성을
+// 해석하지 못하거나 부분 텍스트를 분석하므로 잘못된 진단을 표시하지 않아요.
 const diagnosticsOptions = {
   noSemanticValidation: true,
   noSuggestionDiagnostics: true,
@@ -78,6 +72,24 @@ monacoTS.javascriptDefaults.setCompilerOptions({
   ...monacoTS.javascriptDefaults.getCompilerOptions(),
   jsx: monacoTS.JsxEmit.Preserve
 })
+
+const typeScriptFeatures = installTypeScriptLanguageFeatures(
+  monaco,
+  (owner, filePath, line, column) => {
+    const state = useAppStore.getState()
+    const fileId = state.openFile(
+      {
+        filePath,
+        relativePath: relativePathInsideRoot(owner.rootPath, filePath) ?? filePath,
+        worktreeId: owner.worktreeId,
+        language: detectLanguage(filePath),
+        mode: 'edit'
+      },
+      { focusEditor: true }
+    )
+    state.setPendingEditorReveal({ fileId, filePath, line, column, matchLength: 0 })
+  }
+)
 
 runMonacoSetupSteps([
   ['Vue language registration', () => registerVueLanguage(monaco)],
@@ -102,7 +114,10 @@ loader.config({ monaco })
 
 const unregisterEditorModelRegistry = editorModelRegistry.register(monaco)
 if (import.meta.hot) {
-  import.meta.hot.dispose(unregisterEditorModelRegistry)
+  import.meta.hot.dispose(() => {
+    unregisterEditorModelRegistry()
+    typeScriptFeatures.dispose()
+  })
 }
 // Re-export for convenience
 export { monaco }
