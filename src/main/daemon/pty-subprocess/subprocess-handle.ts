@@ -6,7 +6,8 @@ import { readPtySlavePath } from '../../../shared/pty-slave-line-discipline-echo
 import { signalPosixPtyForegroundGroup } from '../../pty/posix-pty-foreground-group'
 import {
   observePtyForeground,
-  readPtyForegroundGroup
+  readPtyForegroundGroup,
+  createPtyForegroundReader
 } from '../../pty/pty-master-foreground-observation'
 import { readPtsName } from '../../pty/node-pty-pts-name'
 import { terminatePtyJob } from '../../windows/windows-pty-job'
@@ -131,6 +132,7 @@ export function createDaemonPtySubprocessHandle(args: {
   const exitSubscription = physical.onExit(acceptExit)
 
   const slavePath = readPtySlavePath(proc)
+  const foregroundReader = createPtyForegroundReader(proc)
   return {
     pid: proc.pid,
     processNameIsSpawnFile: ptyProcessNameIsSpawnFile(proc),
@@ -146,6 +148,7 @@ export function createDaemonPtySubprocessHandle(args: {
     shellCwd: args.spawnCwd,
     shellPathEnv: args.env.PATH,
     ...(slavePath ? { slavePath } : {}),
+    ...(foregroundReader ? { foreground: foregroundReader } : {}),
     ...(args.startupCommandDeliveredInShellArgs
       ? { startupCommandDeliveredInShellArgs: true }
       : {}),

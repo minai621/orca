@@ -3,6 +3,8 @@ import {
   resolvePtyOwnerColorQueryColors
 } from './pty-owner-color-query-colors'
 import type { PtyStartupIngressIntent } from './pty-startup-ingress-intent'
+import type { PtyStartupIngressOptions } from './pty-startup-ingress-contract'
+import { PtyShellReclaim, type PtyQueryAskerPresence } from './pty-shell-reclaim'
 import { COLOR_SCHEME_QUERY, type PtyStartupQuery } from './pty-startup-query'
 import { TerminalOscColorOverrideTracker } from './terminal-osc-color-override-tracker'
 import {
@@ -29,13 +31,18 @@ const MAX_APPEARANCE_QUERY_CANDIDATE_CHARS = MAX_APPEARANCE_OSC_BODY_CHARS + 16
 
 /** What one PTY's owner reports for OSC 10/11: the theme, with anything the app set on top. */
 export class PtyOwnerColorQueryReplies {
+  private readonly intent: PtyStartupIngressIntent | undefined
+  private readonly resolveHostColors: () => TerminalOscColorQueryReplyColors | null
   private readonly overrides: TerminalOscColorOverrideTracker
+  private readonly shellReclaim: PtyShellReclaim | null
 
   constructor(
-    private readonly intent: PtyStartupIngressIntent | undefined,
-    private readonly resolveHostColors: () => TerminalOscColorQueryReplyColors | null = getPtyOwnerHostColors
+    options: Pick<PtyStartupIngressOptions, 'intent' | 'resolveHostColors' | 'foreground'>
   ) {
+    this.intent = options.intent
+    this.resolveHostColors = options.resolveHostColors ?? getPtyOwnerHostColors
     this.overrides = new TerminalOscColorOverrideTracker(this.ownsAppearance)
+    this.shellReclaim = options.foreground ? new PtyShellReclaim(options.foreground) : null
   }
 
   /** A launcher-pinned PTY's owner is its only theme responder, so viewers and the host never answer it. */
@@ -88,9 +95,19 @@ export class PtyOwnerColorQueryReplies {
     }
   }
 
+  /** Whether the program that sent a query is still there to read the reply; see PtyShellReclaim. */
+  askerPresence(after: string, heldBy?: number): PtyQueryAskerPresence {
+    return this.shellReclaim?.askerPresence(after, heldBy) ?? 'present'
+  }
+
+  get foregroundGroup(): number | undefined {
+    return this.shellReclaim?.foregroundGroup
+  }
+
   /** Every byte the PTY emits, so app-set colours are seen in stream order. */
   observe(data: string): void {
     this.overrides.scan(data, () => this.themeColors())
+    this.shellReclaim?.observe(data)
   }
 
   replies(slots: readonly TerminalOscColorQuerySlot[]): readonly string[] {
