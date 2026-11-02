@@ -1,22 +1,22 @@
 import { PtyIngressHeldSpan } from './pty-ingress-held-span'
 import type { PtyIngressSourceSpan } from './pty-startup-ingress-contract'
-import { PtyQueryAskerPresence, type PtyQueryAskerSample } from './pty-query-asker-presence'
+import {
+  lastCommandFinishEnd,
+  PtyQueryAskerPresence,
+  type PtyQueryAskerSample,
+  type PtyQueryAskerVerdict
+} from './pty-query-asker-presence'
 
-// A shell reaps an exited asker and prints 133;D in about 1 ms; Codex, the strictest live asker, waits 100 ms.
+// Why: a shell prints 133;D about 1 ms after an asker exits; Codex, the strictest live asker, waits 100 ms.
 const ASKER_WAIT_MS = 20
 
-export type PtyQueryAskerVerdict = 'present' | 'gone'
-
-/** Holds a colour query, and every byte after it, until the stream shows whether its asker is still there. The bytes
- *  after it stay held too, so a DA1 sentinel never overtakes the colour reply. */
+/** Holds a colour query and every byte after it until its asker is known, so a DA1 sentinel never overtakes the reply. */
 export class PtyQueryAskerWait {
   private readonly presence: PtyQueryAskerPresence
   private readonly query: PtyIngressHeldSpan
   private later: PtyIngressSourceSpan[] = []
-  private heldBy: number | undefined
-  // A group already proven live is answered at once while it keeps the terminal.
-  private liveGroup: number | undefined
   private verdict: { untilSeq: number; presence: PtyQueryAskerVerdict } | null = null
+  private finishEnd: { input: string; end: number } | undefined
 
   constructor(
     readForegroundGroup: (() => number | null | undefined) | undefined,
@@ -34,48 +34,50 @@ export class PtyQueryAskerWait {
     this.presence.observe(data)
   }
 
-  /** A held query's verdict, else what the stream says now; `after` is output read past the query. */
-  sampleAt(query: PtyIngressSourceSpan, after: string): PtyQueryAskerSample {
+  /** A held query's verdict, else what the stream says now; `input` is the read holding the query. */
+  sampleAt(query: PtyIngressSourceSpan, input: string, queryEnd: number): PtyQueryAskerSample {
     if (this.verdict && query.rawStartSeq < this.verdict.untilSeq) {
       return { presence: this.verdict.presence }
     }
-    const sample = this.presence.sample(after)
-    return sample.presence === 'unsure' && sample.group === this.liveGroup
-      ? { presence: 'present' }
-      : sample
+    return this.presence.sample(() => {
+      // Why: one marker scan per read, however many queries it holds.
+      if (this.finishEnd?.input !== input) {
+        this.finishEnd = { input, end: lastCommandFinishEnd(input) }
+      }
+      return this.finishEnd.end > queryEnd
+    })
   }
 
-  /** `from`: the query and the rest of its read; `heldBy`: the group holding the terminal when it was read. */
-  hold(from: PtyIngressSourceSpan, heldBy: number): void {
+  /** `from`: the query (`queryLength` chars) and the rest of its read; `group` holds the terminal now. */
+  hold(from: PtyIngressSourceSpan, group: number, queryLength: number): void {
     this.query.hold(from)
-    this.heldBy = heldBy
+    this.presence.hold(from.data.slice(queryLength), group)
   }
 
   /** A later read while waiting: the verdict once that read settles it. */
-  review(read: PtyIngressSourceSpan): PtyQueryAskerVerdict | null
-  /** The verdict as it stands now, as at expiry. */
-  review(read: null): PtyQueryAskerVerdict
-  review(read: PtyIngressSourceSpan | null): PtyQueryAskerVerdict | null {
-    if (read) {
-      this.later.push(read)
-    }
-    const sample = this.presence.sample(read?.data ?? '', this.heldBy)
-    return sample.presence === 'gone' ? 'gone' : read ? null : 'present'
+  review(read: PtyIngressSourceSpan): PtyQueryAskerVerdict | null {
+    this.later.push(read)
+    this.presence.watch(read.data)
+    return this.presence.judge(false)
   }
 
-  /** Ends the wait; queries in the held span take `presence`, and later reads are classified afresh. */
+  /** `gone` once proven; otherwise `present` when `final` (expiry), else null to keep holding. */
+  judge(final: boolean): PtyQueryAskerVerdict | null {
+    return this.waiting ? this.presence.judge(final) : null
+  }
+
+  /** Ends the wait; queries in the held span take `verdict`, and later reads are classified afresh. */
   settle(
-    presence: PtyQueryAskerVerdict
+    verdict: PtyQueryAskerVerdict
   ): { from: PtyIngressSourceSpan; later: PtyIngressSourceSpan[] } | null {
     const from = this.query.take()
     const later = this.later
     this.later = []
+    this.presence.release(verdict)
     if (!from) {
       return null
     }
-    this.verdict = { untilSeq: from.rawEndSeq, presence }
-    this.liveGroup = presence === 'present' ? this.heldBy : undefined
-    this.heldBy = undefined
+    this.verdict = { untilSeq: from.rawEndSeq, presence: verdict }
     return { from, later }
   }
 }

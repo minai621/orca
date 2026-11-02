@@ -31,6 +31,20 @@ function parseBestEffortExitCode(value: string | undefined): number | null {
   return Number.isNaN(parsed) ? null : parsed
 }
 
+// Why: searching from `]` skips the ESC of every SGR, which made an ESC-led search the slow part of every PTY read.
+function indexOfOsc133(data: string): number {
+  for (
+    let index = data.indexOf(']133;', 1);
+    index !== -1;
+    index = data.indexOf(']133;', index + 1)
+  ) {
+    if (data.charCodeAt(index - 1) === 0x1b) {
+      return index - 1
+    }
+  }
+  return -1
+}
+
 function findPrefixCarry(data: string): string {
   const maxCarryLength = Math.min(data.length, OSC_133_PREFIX.length - 1)
   for (let length = maxCarryLength; length > 0; length -= 1) {
@@ -50,8 +64,8 @@ export function closesAppOsc133Zone(adjacentMarkers: string, payload: string): b
 }
 
 export type Osc133CommandFinishedScanner = {
-  /** Feed one raw PTY chunk; fires once per complete OSC 133;D sequence. */
-  scan: (data: string) => void
+  /** Feed one raw PTY chunk; fires once per complete OSC 133;D sequence and returns where the chunk's last one ends, or -1. */
+  scan: (data: string) => number
   /** Drop the cross-chunk carry (transport teardown / parser reset). */
   reset: () => void
 }
@@ -66,6 +80,7 @@ export function createOsc133CommandFinishedScanner(
   let carry = ''
   // OSC 133 markers seen back to back since the last other output, e.g. 'BC'.
   let adjacentMarkers = ''
+  let lastFinishEnd = -1
 
   const noteOutput = (): void => {
     adjacentMarkers = ''
@@ -85,18 +100,20 @@ export function createOsc133CommandFinishedScanner(
       return
     }
     if (sequence === 'D') {
+      lastFinishEnd = endInChunk
       onCommandFinished(parseBestEffortExitCode(exitCode))
     }
   }
 
-  const scan = (data: string): void => {
+  const scan = (data: string): number => {
+    lastFinishEnd = -1
     let combined = carry + data
     // `combined` starts at this index in `data`; negative while it still holds the carry.
     let combinedStartInChunk = -carry.length
     carry = ''
 
     while (combined.length > 0) {
-      const start = combined.indexOf(OSC_133_PREFIX)
+      const start = indexOfOsc133(combined)
       if (start === -1) {
         carry = findPrefixCarry(combined)
         if (carry.length < combined.length) {
@@ -127,6 +144,7 @@ export function createOsc133CommandFinishedScanner(
       combined = combined.slice(sequenceEnd)
       combinedStartInChunk += sequenceEnd
     }
+    return lastFinishEnd
   }
 
   return {

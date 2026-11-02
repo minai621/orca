@@ -98,15 +98,42 @@ describe('PTY owner colour replies after the asker exits', () => {
     expect(writes).toEqual([REPLY])
   })
 
-  it('flushes held output at a snapshot barrier', () => {
+  it('forgets a live shell-group asker once its command ends', () => {
     vi.useFakeTimers()
-    const { ingress, writes, visible, runCommand } = createHarness()
-    runCommand()
-    ingress.accept(`${QUERY}after`)
-    ingress.snapshotBarrier()
+    const { ingress, writes, runCommand } = createHarness()
+    runCommand(SHELL_GROUP)
+    ingress.accept(QUERY)
+    vi.advanceTimersByTime(20)
+    runCommand(SHELL_GROUP)
+    ingress.accept(QUERY)
+    ingress.accept(PROMPT)
+    vi.runAllTimers()
 
     expect(writes).toEqual([REPLY])
-    expect(visible()).toBe(`${PROMPT}${COMMAND_START}after`)
+  })
+
+  it('sees a finish marker split across reads during the wait', () => {
+    vi.useFakeTimers()
+    const { ingress, writes, runCommand } = createHarness()
+    runCommand(SHELL_GROUP)
+    ingress.accept(`${QUERY}\x1b]133;`)
+    ingress.accept('D;0\x07')
+    vi.runAllTimers()
+
+    expect(writes).toEqual([])
+  })
+
+  it('keeps a live asker held across a snapshot barrier, which never answers early', () => {
+    vi.useFakeTimers()
+    const { ingress, writes, visible, runCommand } = createHarness()
+    runCommand(SHELL_GROUP)
+    ingress.accept(`${QUERY}after`)
+    ingress.snapshotBarrier()
+    expect(writes).toEqual([])
+    ingress.accept(PROMPT)
+
+    expect(writes).toEqual([])
+    expect(visible()).toBe(`${PROMPT}${COMMAND_START}after${PROMPT}`)
   })
 
   it('answers at once at the prompt, at an Oh My Posh prompt, and with no foreground group', () => {
