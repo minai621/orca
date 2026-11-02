@@ -138,12 +138,9 @@ export class PtyStartupIngress {
   private applyOperation(operation: PtyStartupIngressOperation): void {
     switch (operation.kind) {
       case 'data':
-        if (this.askerWait.waiting) {
-          this.settleAskerWait(this.askerWait.review(operation.chunk))
-          return
-        }
-        this.processEchoSpan(operation.chunk)
-        return
+        return this.askerWait.waiting
+          ? this.settleAskerWait(this.askerWait.review(operation.chunk))
+          : this.processEchoSpan(operation.chunk)
       case 'asker-wait':
         this.settleAskerWait(this.askerWait.judge(true))
         return
@@ -315,13 +312,16 @@ export class PtyStartupIngress {
     }
   }
 
-  /** Settle held askers first (a barrier ends only a wait proven gone; teardown drops them), as their bytes came first.
+  /** Settle held askers first (a barrier ends only a wait proven gone; teardown drops them); anything still behind one stays held.
    * Release query before echo defensively: it would own earlier bytes, though current classification never arms both.
    * Retain torn colors across barriers unless explicitly included: viewers lack reply authority, so only hold timeout/teardown ends them. */
   private releasePendingInSourceOrder(includeColorQuery: boolean): void {
     do {
       this.settleAskerWait(includeColorQuery ? 'gone' : this.askerWait.judge(false))
     } while (includeColorQuery && this.askerWait.waiting)
+    if (this.askerWait.waiting) {
+      return
+    }
     if (includeColorQuery || this.colorQueries.releasesTornCsi(this.tornQuery.span?.data)) {
       this.releaseQueryPending()
     }

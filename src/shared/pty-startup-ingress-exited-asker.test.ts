@@ -29,7 +29,7 @@ function createHarness() {
     ingress.accept(`${PROMPT}${COMMAND_START}`)
     group = commandGroup
   }
-  return { ingress, writes, visible, setGroup, runCommand }
+  return { ingress, writes, emissions, visible, setGroup, runCommand }
 }
 
 describe('PTY owner colour replies after the asker exits', () => {
@@ -134,6 +134,23 @@ describe('PTY owner colour replies after the asker exits', () => {
 
     expect(writes).toEqual([])
     expect(visible()).toBe(`${PROMPT}${COMMAND_START}after${PROMPT}`)
+  })
+
+  it('keeps a torn echo behind a held query across a snapshot barrier', () => {
+    vi.useFakeTimers()
+    const { ingress, writes, emissions, runCommand } = createHarness()
+    ingress.accept(QUERY)
+    runCommand()
+    // A cooked reader echoes the earlier reply (`^[]11;…`) right after the next query.
+    ingress.accept(`${QUERY}^[]11;rgb`)
+    ingress.snapshotBarrier()
+    vi.advanceTimersByTime(20)
+
+    expect(writes).toEqual([REPLY, REPLY])
+    // Emitted ranges stay contiguous: the held echo never overtakes the held query.
+    for (const [index, emission] of emissions.entries()) {
+      expect(emission.rawStartSeq).toBe(index === 0 ? 0 : emissions[index - 1]?.rawEndSeq)
+    }
   })
 
   it('answers at once at the prompt, at an Oh My Posh prompt, and with no foreground group', () => {
